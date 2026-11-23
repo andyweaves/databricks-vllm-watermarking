@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM watermark detector</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#5b6470; --card:#f6f7f9; --line:#dde1e6; --accent:#1f6feb;
+          --ok:#1a7f37; --warn:#9a6700; --bad:#57606a; --hi:31,111,235; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9aa4b0; --card:#161b22; --line:#30363d; --accent:#4c8dff;
+            --ok:#3fb950; --warn:#d29922; --bad:#8b949e; --hi:76,141,255; } }
+  * { box-sizing:border-box } body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--fg) }
+  header { padding:20px 28px 0 } h1 { font-size:20px; margin:0 } .sub { color:var(--muted); margin:4px 0 0; font-size:13px }
+  nav { display:flex; gap:4px; padding:16px 28px 0; border-bottom:1px solid var(--line) }
+  nav button { background:none; border:0; border-bottom:2px solid transparent; padding:8px 12px; color:var(--muted); font:inherit; cursor:pointer }
+  nav button.on { color:var(--fg); border-bottom-color:var(--accent) }
+  main { padding:20px 28px; max-width:1100px } section { display:none } section.on { display:block }
+  textarea, input { width:100%; font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:10px }
+  textarea { min-height:180px; resize:vertical } label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end } .row > div { flex:1; min-width:140px }
+  .btn { margin-top:12px; background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px 16px; font:inherit; cursor:pointer }
+  .btn:disabled { opacity:.5; cursor:wait }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-top:16px }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px }
+  .verdict { display:inline-block; font-weight:600; padding:3px 10px; border-radius:999px; color:#fff; font-size:13px }
+  .v-watermarked { background:var(--ok) } .v-too_short { background:var(--warn) } .v-not_detected { background:var(--bad) }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; margin:12px 0 }
+  .stat b { display:block; font-size:18px; font-variant-numeric:tabular-nums } .stat span { font-size:12px; color:var(--muted) }
+  .tokens { white-space:pre-wrap; line-height:1.9; font-size:14px; max-height:420px; overflow:auto; border-top:1px solid var(--line); padding-top:10px }
+  .legend { font-size:12px; color:var(--muted); margin-top:8px } .sw { display:inline-block; width:28px; height:10px; vertical-align:middle; border-radius:2px }
+  .err { color:#cf222e } table { border-collapse:collapse; width:100% } td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); font-size:14px }
+  code, pre { font-family:ui-monospace,Menlo,monospace; font-size:13px } pre { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:12px; overflow:auto }
+  .note { font-size:13px; color:var(--muted) }
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM watermark detector</h1>
+  <p class="sub" id="meta">Loading…</p>
+</header>
+<nav>
+  <button data-tab="check" class="on">Check text</button>
+  <button data-tab="generate">Generate and check</button>
+  <button data-tab="robust">Robustness</button>
+  <button data-tab="api">API</button>
+</nav>
+<main>
+  <section id="check" class="on">
+    <label for="text">Text to check</label>
+    <textarea id="text" placeholder="Paste text here. About 200 tokens or more is needed for a reliable negative result."></textarea>
+    <button class="btn" id="checkBtn">Check for watermark</button>
+    <div id="checkOut"></div>
+  </section>
+
+  <section id="generate">
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" style="min-height:90px">Write a 300-word blog post about why provenance matters for AI-generated content.</textarea>
+    <div class="row">
+      <div><label for="maxTokens">Max tokens</label><input id="maxTokens" type="number" value="400" min="16" max="2048"></div>
+      <div><label for="temp">Temperature</label><input id="temp" type="number" value="0.7" step="0.1" min="0" max="2"></div>
+      <div id="controlBox" style="display:none"><label><input id="control" type="checkbox" style="width:auto"> Also generate an unwatermarked control</label></div>
+    </div>
+    <button class="btn" id="genBtn">Generate and check</button>
+    <p class="note">The endpoint may take several minutes to respond if it has scaled to zero.</p>
+    <div id="genOut" class="grid"></div>
+  </section>
+
+  <section id="robust">
+    <p class="note">Apply common edits and re-check. Paraphrasing and translation are the known weaknesses of text watermarks; they are not simulated here.</p>
+    <label for="rtext">Watermarked text</label>
+    <textarea id="rtext" placeholder="Paste watermarked text, or generate some first."></textarea>
+    <div class="row">
+      <div><label for="trunc">Truncate to tokens</label><input id="trunc" type="number" value="150" min="10"></div>
+      <div><label for="del">Delete fraction of words</label><input id="del" type="number" value="0.2" step="0.05" min="0" max="0.9"></div>
+    </div>
+    <button class="btn" id="robBtn">Run edits</button>
+    <div id="robOut"></div>
+  </section>
+
+  <section id="api">
+    <p>The UI uses the same REST API. Callers authenticate to the app with a Databricks OAuth token.</p>
+    <pre>curl -s -X POST "$APP_URL/api/v1/detect" \
+  -H "Authorization: Bearer $(databricks auth token -p PROFILE | jq -r .access_token)" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "…", "include_tokens": false}'</pre>
+    <p>Response fields: <code>verdict</code> (watermarked, not_detected, too_short), <code>p_value</code>, <code>z_score</code>,
+      <code>mean_g</code> (mean per-token score on a 0–1 scale; 0.5 expected without a watermark), <code>num_scored</code>, <code>key_id</code>, <code>checked_at</code>,
+      <code>text_sha256</code> and an HMAC <code>signature</code> over the result. OpenAPI docs: <a href="docs">/docs</a>.</p>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button, section").forEach(e => e.classList.remove("on"));
+  b.classList.add("on"); $(b.dataset.tab).classList.add("on");
+});
+const esc = (s) => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const LABEL = {watermarked:"Watermark detected", not_detected:"Not detected", too_short:"Too short to assess"};
+
+async function post(path, body) {
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail ? JSON.stringify(data.detail) : r.statusText);
+  return data;
+}
+function fmtP(p) { return p < 1e-4 ? p.toExponential(1) : p.toFixed(4); }
+function verdict(d) {
+  return `<span class="verdict v-${d.verdict}">${LABEL[d.verdict]}</span>
+  <div class="stats">
+    <div class="stat"><b>${fmtP(d.p_value)}</b><span>p-value</span></div>
+    <div class="stat"><b>${d.z_score.toFixed(1)}</b><span>z-score</span></div>
+    <div class="stat"><b>${d.mean_g.toFixed(3)}</b><span>mean g (0.5 = none)</span></div>
+    <div class="stat"><b>${d.num_scored}</b><span>tokens scored</span></div>
+  </div>`;
+}
+function tokens(segs) {
+  if (!segs) return "";
+  const html = segs.map(s => {
+    if (s.s === null) return esc(s.t);
+    const a = Math.max(0, (s.s - 0.5) * 1.6).toFixed(2);
+    return `<span style="background:rgba(var(--hi),${a})" title="g=${s.s}">${esc(s.t)}</span>`;
+  }).join("");
+  return `<div class="tokens">${html}</div>
+  <div class="legend">Shading shows each token's keyed g-score: <span class="sw" style="background:rgba(var(--hi),.8)"></span> high
+  (favoured by the key) to <span class="sw" style="border:1px solid var(--line)"></span> chance. Unshaded text was not scored.</div>`;
+}
+async function run(btn, fn) { btn.disabled = true; try { await fn(); } finally { btn.disabled = false; } }
+
+fetch("api/v1/info").then(r => r.json()).then(i => {
+  $("meta").textContent = `Model: ${i.model || "?"} · watermark ${i.mode} · key ${i.key_id} · endpoint ${i.serving_endpoint || "not set"}`;
+  if (i.allow_control) $("controlBox").style.display = "";
+});
+
+$("checkBtn").onclick = () => run($("checkBtn"), async () => {
+  try { const d = await post("api/v1/detect", {text:$("text").value, include_tokens:true});
+        $("checkOut").innerHTML = `<div class="card">${verdict(d)}${tokens(d.segments)}</div>`; }
+  catch (e) { $("checkOut").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+});
+
+$("genBtn").onclick = () => run($("genBtn"), async () => {
+  $("genOut").innerHTML = `<p class="note">Generating…</p>`;
+  try {
+    const d = await post("api/v1/generate", {prompt:$("prompt").value, max_tokens:+$("maxTokens").value,
+                                             temperature:+$("temp").value, control:$("control").checked});
+    $("genOut").innerHTML = Object.entries(d).map(([name, r]) =>
+      `<div class="card"><h3 style="margin:0 0 8px">${name === "control" ? "Control (watermark off)" : "Watermarked"}
+       <span class="note">${r.latency_s}s</span></h3>${verdict(r.detection)}${tokens(r.detection.segments)}</div>`).join("");
+    if (d.watermarked) $("rtext").value = d.watermarked.text;
+  } catch (e) { $("genOut").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+});
+
+$("robBtn").onclick = () => run($("robBtn"), async () => {
+  try {
+    const d = await post("api/v1/robustness", {text:$("rtext").value, truncate_tokens:+$("trunc").value, delete_fraction:+$("del").value});
+    $("robOut").innerHTML = `<div class="card"><table><tr><th>Variant</th><th>Verdict</th><th>p-value</th><th>z</th><th>Tokens scored</th></tr>` +
+      Object.entries(d).map(([k, v]) => `<tr><td>${esc(k)}</td><td><span class="verdict v-${v.detection.verdict}">${LABEL[v.detection.verdict]}</span></td>
+      <td>${fmtP(v.detection.p_value)}</td><td>${v.detection.z_score.toFixed(1)}</td><td>${v.detection.num_scored}</td></tr>`).join("") + `</table></div>`;
+  } catch (e) { $("robOut").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+});
+</script>
+</body>
+</html>

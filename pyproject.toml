@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-watermark"
+version = "0.1.0"
+description = "SynthID-style text watermarking for vLLM on Databricks, with a numpy-only detector"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+# The serving side gets torch and vLLM from the AI Runtime environment.
+gpu = ["torch>=2.4"]
+dev = ["pytest>=8", "scipy>=1.11", "torch>=2.4", "transformers>=4.46", "fastapi>=0.115", "httpx>=0.27", "tokenizers>=0.20", "databricks-sdk>=0.102.0", "openai>=1.40"]
+
+[tool.setuptools.packages.find]
+where = ["app"]
+include = ["llm_watermark*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: downloads a small model from Hugging Face and generates text on CPU"]

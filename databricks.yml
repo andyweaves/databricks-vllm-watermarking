@@ -1,0 +1,91 @@
+bundle:
+  name: databricks-vllm-watermarking
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for the schema, volume and registered model (must already exist)
+  schema:
+    description: Schema created by this bundle
+    default: llm_watermark
+  volume:
+    description: Volume for the tokenizer files the app reads
+    default: artifacts
+  model:
+    description: qwen3_8_27b or gpt_oss_120b (must match the model deployed by notebook 01)
+    default: qwen3_8_27b
+  watermark_mode:
+    description: llmwm, vllm_gumbel or vllm_dual_key_gumbel (must match notebook 01)
+    default: llmwm
+  endpoint_name:
+    description: Name of the watermarked serving endpoint created by notebook 01
+    default: watermarked-llm
+  secret_scope:
+    description: Secret scope holding the watermark key
+    default: llm-watermark
+  secret_key:
+    description: Secret key name for the watermark key
+    default: watermark-key
+  allow_control:
+    description: Show the unwatermarked control option in the app (the endpoint must allow opt-out)
+    default: "false"
+  app_name:
+    description: Name of the detection app
+    default: llm-watermark-detector
+
+sync:
+  exclude:
+    - .venv
+    - "**/__pycache__"
+    - "*.egg-info"
+
+resources:
+  schemas:
+    llm_watermark:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: Watermarked LLM demo (databricks-vllm-watermarking)
+
+  volumes:
+    artifacts:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.llm_watermark.name}
+      name: ${var.volume}
+      volume_type: MANAGED
+
+  apps:
+    watermark_detector:
+      name: ${var.app_name}
+      description: Detects the llm_watermark text watermark (REST API and UI)
+      source_code_path: ./app
+      config:
+        command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+        env:
+          - name: WATERMARK_KEY
+            value_from: watermark-key
+          - name: TOKENIZER_PATH
+            value: /Volumes/${var.catalog}/${var.schema}/${var.volume}/${var.model}/tokenizer.json
+          - name: SERVING_ENDPOINT
+            value: ${var.endpoint_name}
+          - name: MODEL_KEY
+            value: ${var.model}
+          - name: WATERMARK_MODE
+            value: ${var.watermark_mode}
+          - name: ALLOW_CONTROL
+            value: ${var.allow_control}
+      resources:
+        - name: watermark-key
+          description: Watermark key used to recompute g-values
+          secret:
+            scope: ${var.secret_scope}
+            key: ${var.secret_key}
+            permission: READ
+        - name: tokenizer-volume
+          description: Tokenizer files written by notebook 01
+          uc_securable:
+            securable_full_name: ${resources.volumes.artifacts.catalog_name}.${resources.volumes.artifacts.schema_name}.${resources.volumes.artifacts.name}
+            securable_type: VOLUME
+            permission: READ_VOLUME
+
+targets:
+  dev:
+    default: true
