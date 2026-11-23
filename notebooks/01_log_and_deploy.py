@@ -19,7 +19,8 @@
 # MAGIC In Azure EU regions the only in-geo accelerator is 8x H100, which costs roughly $56 per hour at list price:
 # MAGIC detach as soon as the notebook finishes.
 # MAGIC
-# MAGIC **Status:** Custom LLM Serving is in Public Preview and documented as US-only. Deploying it in an EU region is untested.
+# MAGIC **Status:** Custom LLM Serving is in Public Preview and documented as US-only. This notebook was run end to end in
+# MAGIC Azure Sweden Central on 23 November 2026 (Qwen3.8-27B, `llmwm` mode, Standard environment v6 with vLLM 0.33.0).
 
 # COMMAND ----------
 
@@ -32,14 +33,21 @@
 
 # COMMAND ----------
 
-# Remove packages left in this notebook's environment overlay by earlier installs (for example a pip-installed
-# vLLM or torch), so the AI environment's own vLLM, torch and flash-attn are used. A fresh environment has none.
+# Remove packages that an earlier install left in this notebook's environment overlay on top of the base
+# environment's own copies (for example a second vLLM or torch over the AI environment, which breaks its bundled
+# flash-attn). A fresh environment has none.
 import importlib.metadata as _md
 import subprocess
 import sys
 
 _overlay = [p for p in sys.path if ".ephemeral_nfs/envs" in p and p.endswith("site-packages")]
-_leftovers = sorted({d.metadata["Name"] for d in _md.distributions(path=_overlay)} - {"llm-watermark", "llm_watermark"})
+_base = [p for p in sys.path if p.endswith("site-packages") and p not in _overlay]
+_norm = lambda n: n.lower().replace("_", "-")
+_base_names = {_norm(d.metadata["Name"]) for d in _md.distributions(path=_base)}
+# Only packages that shadow one in the base environment, never the environment's own tooling.
+_leftovers = sorted({d.metadata["Name"] for d in _md.distributions(path=_overlay)
+                     if _norm(d.metadata["Name"]) in _base_names
+                     and _norm(d.metadata["Name"]) not in {"pip", "setuptools", "wheel", "llm-watermark"}})
 if _leftovers:
     print("removing from the environment overlay:", ", ".join(_leftovers))
     subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", *_leftovers], check=True)
@@ -66,6 +74,15 @@ print("installing", (VLLM_PIN.strip() + " and ") if VLLM_PIN else "", "llm_water
 # COMMAND ----------
 
 # MAGIC %pip install -q -r /tmp/llm_watermark_requirements.txt
+
+# COMMAND ----------
+
+# Environments can be cached between runs, so always reinstall this package from the current bundle files.
+import subprocess
+import sys
+
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--force-reinstall", "--no-cache-dir",
+                BUNDLE_ROOT], check=True)
 
 # COMMAND ----------
 
@@ -163,10 +180,21 @@ import llm_watermark
 from llm_watermark import WatermarkConfig, WatermarkKey
 
 print("vLLM", vllm.__version__, "| torch", torch.__version__, "| llm_watermark", llm_watermark.__version__)
+_nb = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
+_src = os.path.join(os.path.dirname(os.path.dirname(_nb if _nb.startswith("/Workspace") else "/Workspace" + _nb)),
+                    "app", "llm_watermark", "vllm_processor.py")
+_installed = os.path.join(os.path.dirname(llm_watermark.__file__), "vllm_processor.py")
+if open(_src).read() != open(_installed).read():
+    raise RuntimeError("The installed llm_watermark differs from the bundle files; re-run the install cells.")
 print("vLLM from", os.path.dirname(vllm.__file__), "| torch from", os.path.dirname(torch.__file__))
-if ".ephemeral_nfs" in vllm.__file__ or ".ephemeral_nfs" in torch.__file__:
-    raise RuntimeError("vLLM or torch is loading from the notebook overlay, not the AI environment. Re-run the cleanup "
-                       "cell at the top, or reset the environment, then run all again.")
+import importlib.metadata as _md
+import sys
+
+_base_sp = [p for p in sys.path if p.endswith("site-packages") and ".ephemeral_nfs/envs" not in p]
+_base_has_vllm = any(d.metadata["Name"].lower() == "vllm" for d in _md.distributions(path=_base_sp))
+if _base_has_vllm and ".ephemeral_nfs" in vllm.__file__:
+    raise RuntimeError("A second vLLM is installed over the AI environment's own vLLM. Re-run the cleanup cell at the "
+                       "top, or reset the environment, then run all again.")
 _vllm = tuple(int(x) for x in vllm.__version__.split(".")[:2])
 _needed = (0, 31) if MODE == "llmwm" else (0, 30)
 if _vllm < _needed:
@@ -372,7 +400,7 @@ if ENDPOINT in existing:
     w.serving_endpoints.update_config(name=ENDPOINT, served_entities=[served])
     print("updating", ENDPOINT)
 else:
-    w.serving_endpoints.create(name=ENDPOINT, config=EndpointCoreConfigInput(served_entities=[served]))
+    w.serving_endpoints.create(name=ENDPOINT, config=EndpointCoreConfigInput(name=ENDPOINT, served_entities=[served]))
     print("creating", ENDPOINT)
 
 # COMMAND ----------

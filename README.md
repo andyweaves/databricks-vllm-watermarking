@@ -87,9 +87,25 @@ Custom LLM Serving runs on a single GPU. Both models below fit on one 80 GB A100
 | `gpt_oss_120b` | `openai/gpt-oss-120b` | MXFP4, ~65 GB | Tight; context capped at 16k tokens, vLLM's single-GPU settings applied |
 
 **EU regions.** Custom LLM Serving is in Public Preview and its documentation currently lists US regions only, although
-AI Runtime (which it depends on) is GA in EU regions. This example targets an Azure EU workspace (logging on AI
-Runtime 8x H100, serving on `GPU_LARGE`). If your EU workspace rejects the endpoint, the same code runs in US
-regions, and classic GPU custom model serving (vLLM inside a pyfunc) is the documented EU route today.
+AI Runtime (which it depends on) is GA in EU regions. This example was deployed end to end in an **Azure Sweden
+Central** workspace on 23 November 2026: logged on AI Runtime 8x H100, served on `GPU_LARGE` (1x A100). Check
+availability in your own region and workspace before relying on it.
+
+## Tested results
+
+`llmwm` mode, Qwen3.8-27B, vLLM 0.33.0, Azure Sweden Central, 23 November 2026. Each reply was checked from its
+decoded text by notebook 02.
+
+| Prompt | Arm | Verdict | z | p-value | Tokens scored |
+|---|---|---|---|---|---|
+| 300-word blog post on provenance | watermarked | watermarked | 6.4 | 7.4e-11 | 396 |
+| | control (opt-out) | not_detected | -1.1 | 0.85 | 396 |
+| Heat pump explainer | watermarked | watermarked | 5.0 | 2.8e-07 | 396 |
+| | control (opt-out) | not_detected | 0.6 | 0.27 | 396 |
+| Team planning email | watermarked | watermarked | 4.9 | 5.7e-07 | 297 |
+| | control (opt-out) | not_detected | 1.4 | 0.08 | 292 |
+
+The vLLM-native modes are tested only on CPU so far (detector bit-for-bit against vLLM's code), not on a GPU endpoint.
 
 ## Prerequisites
 
@@ -111,9 +127,14 @@ databricks secrets put-secret llm-watermark watermark-key --string-value "$(open
 databricks bundle deploy -p $PROFILE --var catalog=$CATALOG
 ```
 
-3. Open `notebooks/01_log_and_deploy` in the bundle folder in your workspace, attach it to **AI Runtime** with the
-   **AI environment, version 6** (it bundles vLLM; the notebook installs only this package), set the `catalog` widget,
-   and run all. It logs and registers the model, creates the endpoint, writes
+3. Open `notebooks/01_log_and_deploy` in the bundle folder in your workspace, attach it to **AI Runtime** (8x H100 in
+   Azure EU regions) with the **Standard environment, version 6** (the notebook installs vLLM 0.33.0) or the **AI
+   environment, version 6** (it uses the bundled vLLM), set the `catalog` widget, and run all. Set `stage` to `test` to
+   stop after the in-notebook vLLM check, and `wait_for_endpoint` to `false` to avoid holding the GPU while the
+   endpoint builds (20–30 minutes).
+
+   To run it as a job instead, submit a one-time run with `"compute": {"hardware_accelerator": "GPU_8xH100"}` on the
+   task and `{"environment_version": "6"}` as its environment. It logs and registers the model, creates the endpoint, writes
    the tokenizer to the volume and grants the app access. Detach once it reaches step 9; the endpoint keeps deploying.
 
 4. Start the app and open it:
@@ -174,7 +195,7 @@ test (step 5) is the first run against real vLLM.
 - **Tokenization.** Detection re-tokenizes decoded text; non-canonical tokenizations slightly weaken the signal.
 - **Key management.** One key from a Databricks secret. The detector supports several keys (`detect_with_keys`) so
   retired keys still detect older text, but rotation is manual.
-- **Endpoint request fields.** The control option relies on the serving endpoint passing `vllm_xargs` through to vLLM.
+- **Endpoint request fields.** The control option relies on the serving endpoint passing `vllm_xargs` (`{"watermark": 0}`) through to vLLM.
 
 ## License
 

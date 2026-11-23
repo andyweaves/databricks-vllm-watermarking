@@ -107,7 +107,7 @@ def test_modes_dispatch_and_opt_out_fields():
     tokens = _gumbel_generate(native_key(key), 250, seed=3)
     assert detect(tokens, key, "vllm_gumbel").verdict == "watermarked"
     assert detect(tokens, key, "llmwm").verdict != "watermarked"
-    assert opt_out_fields("llmwm") == {"vllm_xargs": {"watermark": False}}
+    assert opt_out_fields("llmwm") == {"vllm_xargs": {"watermark": 0}}
     assert opt_out_fields("vllm_gumbel") == {"watermarking": False}
     assert "--logits-processors" in " ".join(launch_prefix("llmwm"))
     assert launch_prefix("vllm_dual_key_gumbel")[0] == "WATERMARK_VLLM_ALGORITHM=dual_key_gumbel"

@@ -37,6 +37,17 @@ from .hashing import PAD_TOKEN, context_hash_np, context_hash_torch, signed_seed
 logger = logging.getLogger(__name__)
 
 
+def _as_bool(value) -> bool:
+    """vLLM passes vllm_xargs values as str, int or float, so accept 0/1 and true/false in any of those forms."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in ("0", "1", "true", "false"):
+        return value.strip().lower() in ("1", "true")
+    raise ValueError("vllm_xargs.watermark must be 0 or 1 (or true/false)")
+
+
 class WatermarkLogitsProcessor(LogitsProcessor):
     def __init__(self, vllm_config, req_states):
         import torch
@@ -79,12 +90,13 @@ class WatermarkLogitsProcessor(LogitsProcessor):
     @classmethod
     def validate_params(cls, sampling_params) -> None:
         extra = getattr(sampling_params, "extra_args", None) or {}
-        if "watermark" in extra and not isinstance(extra["watermark"], bool):
-            raise ValueError("vllm_xargs.watermark must be true or false")
+        if "watermark" in extra:
+            _as_bool(extra["watermark"])          # raises ValueError for anything else
 
     def add_request(self, req_idx: int, sampling_params) -> bool:
         extra = getattr(sampling_params, "extra_args", None) or {}
-        enabled = not (self.config.allow_opt_out and extra.get("watermark") is False)
+        requested = _as_bool(extra["watermark"]) if "watermark" in extra else True
+        enabled = not (self.config.allow_opt_out and requested is False)
 
         temperature = sampling_params.temperature
         if temperature is None or temperature <= 0:

@@ -85,6 +85,7 @@ def test_opt_out_only_when_allowed(monkeypatch):
     proc, _ = _processor(monkeypatch)
     assert proc.add_request(0, _params(extra={"watermark": False})) is True      # not allowed by default
     proc, _ = _processor(monkeypatch, WATERMARK_ALLOW_OPT_OUT="true")
+    assert proc.add_request(2, _params(extra={"watermark": 0})) is False      # how vLLM delivers JSON false
     assert proc.add_request(0, _params(extra={"watermark": False})) is False
     assert proc.add_request(1, _params()) is True
     proc.apply_staged_writes()
@@ -97,9 +98,11 @@ def test_opt_out_only_when_allowed(monkeypatch):
 def test_validate_params(monkeypatch):
     from llm_watermark.vllm_processor import WatermarkLogitsProcessor
 
-    WatermarkLogitsProcessor.validate_params(_params(extra={"watermark": True}))
-    with pytest.raises(ValueError):
-        WatermarkLogitsProcessor.validate_params(_params(extra={"watermark": "no"}))
+    for ok in (True, False, 0, 1, 0.0, "0", "false", "TRUE"):
+        WatermarkLogitsProcessor.validate_params(_params(extra={"watermark": ok}))
+    for bad in ("no", 2, [0]):
+        with pytest.raises(ValueError):
+            WatermarkLogitsProcessor.validate_params(_params(extra={"watermark": bad}))
 
 
 def test_greedy_requests_are_watermarked(monkeypatch):

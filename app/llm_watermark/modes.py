@@ -33,7 +33,7 @@ def detect(token_ids, key: WatermarkKey, mode: str, config: WatermarkConfig | No
 def opt_out_fields(mode: str) -> dict:
     """Request fields that ask the endpoint for an unwatermarked (control) generation."""
     check_mode(mode)
-    return {"vllm_xargs": {"watermark": False}} if mode == "llmwm" else {"watermarking": False}
+    return {"vllm_xargs": {"watermark": 0}} if mode == "llmwm" else {"watermarking": False}
 
 
 def launch_prefix(mode: str) -> list[str]:

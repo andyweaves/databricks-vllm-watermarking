@@ -23,12 +23,21 @@ _nb = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebook
 BUNDLE_ROOT = os.path.dirname(os.path.dirname(_nb if _nb.startswith("/Workspace") else "/Workspace" + _nb))
 assert os.path.exists(os.path.join(BUNDLE_ROOT, "pyproject.toml")), f"pyproject.toml not found under {BUNDLE_ROOT}"
 with open("/tmp/llm_watermark_requirements.txt", "w") as f:
-    f.write('tokenizers\n' + BUNDLE_ROOT + "\n")
+    f.write('tokenizers\nopenai\ndatabricks-sdk>=0.102.0\n' + BUNDLE_ROOT + "\n")
 print("installing llm_watermark from", BUNDLE_ROOT)
 
 # COMMAND ----------
 
 # MAGIC %pip install -q -r /tmp/llm_watermark_requirements.txt
+
+# COMMAND ----------
+
+# Environments can be cached between runs, so always reinstall this package from the current bundle files.
+import subprocess
+import sys
+
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--force-reinstall", "--no-cache-dir",
+                BUNDLE_ROOT], check=True)
 
 # COMMAND ----------
 
@@ -99,3 +108,9 @@ for prompt in PROMPTS:
         rows.append((prompt[:40], "watermarked" if marked else "control", r.verdict, round(r.z_score, 1),
                      f"{r.p_value:.1e}", r.num_scored))
 display(spark.createDataFrame(rows, "prompt string, arm string, verdict string, z double, p string, tokens int"))
+
+# COMMAND ----------
+
+import json
+
+dbutils.notebook.exit(json.dumps(rows))
