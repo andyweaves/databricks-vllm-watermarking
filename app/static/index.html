@@ -38,6 +38,8 @@
 <header>
   <h1>LLM watermark detector</h1>
   <p class="sub" id="meta">Loading…</p>
+  <p class="sub" id="targetBox" style="display:none"><label for="target">Model and watermark</label>
+    <select id="target" style="width:auto"></select></p>
 </header>
 <nav>
   <button data-tab="check" class="on">Check text</button>
@@ -99,6 +101,7 @@ const esc = (s) => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}
 const LABEL = {watermarked:"Watermark detected", not_detected:"Not detected", too_short:"Too short to assess"};
 
 async function post(path, body) {
+  if ($("target").value) body = {...body, target:$("target").value};
   const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail ? JSON.stringify(data.detail) : r.statusText);
@@ -127,8 +130,17 @@ function tokens(segs) {
 }
 async function run(btn, fn) { btn.disabled = true; try { await fn(); } finally { btn.disabled = false; } }
 
+let INFO = null;
+function showMeta() {
+  const t = INFO.targets.find(x => x.model === $("target").value) || INFO.targets[0];
+  $("meta").textContent = `Model: ${t.model || "?"} · watermark ${t.mode} · key ${INFO.key_id} · endpoint ${t.endpoint || "not set"}`;
+}
 fetch("api/v1/info").then(r => r.json()).then(i => {
-  $("meta").textContent = `Model: ${i.model || "?"} · watermark ${i.mode} · key ${i.key_id} · endpoint ${i.serving_endpoint || "not set"}`;
+  INFO = i;
+  $("target").innerHTML = i.targets.map(t => `<option value="${esc(t.model)}">${esc(t.model)} (${esc(t.mode)})</option>`).join("");
+  if (i.targets.length > 1) $("targetBox").style.display = "";
+  $("target").onchange = showMeta;
+  showMeta();
   if (i.allow_control) $("controlBox").style.display = "";
 });
 

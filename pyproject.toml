@@ -9,7 +9,7 @@ description = "SynthID-style text watermarking for vLLM on Databricks, with a nu
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24"]
+dependencies = ["numpy>=1.24", "scipy>=1.11"]   # scipy: dual-key detection p-values
 
 [project.optional-dependencies]
 # The serving side gets torch and vLLM from the AI Runtime environment.

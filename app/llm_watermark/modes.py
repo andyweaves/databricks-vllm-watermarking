@@ -1,9 +1,10 @@
 """Watermark modes shared by the notebooks and the app.
 
-llmwm                 this package's SynthID-style processor (vllm_processor.py)
-vllm_gumbel           vLLM's built-in Gumbel-max watermark (vLLM >= 0.30)
-vllm_dual_key_gumbel  vLLM's built-in dual-key Gumbel-max watermark, which also
-                      supports speculative decoding
+vllm_dual_key_gumbel  vLLM's built-in dual-key Gumbel-max watermark (vLLM >= 0.30),
+                      the default. Also supports speculative decoding
+vllm_gumbel           vLLM's built-in single-key Gumbel-max watermark
+llmwm                 optional: this package's SynthID-style processor
+                      (vllm_processor.py)
 """
 
 from __future__ import annotations

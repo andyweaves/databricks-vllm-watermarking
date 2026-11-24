@@ -22,6 +22,10 @@ def client_and_text(tmp_path_factory):
     mp.setenv("WATERMARK_KEY", TEST_SECRET)
     mp.setenv("TOKENIZER_PATH", tok_path)
     mp.setenv("MODEL_KEY", "smollm2-135m")
+    mp.setenv("WATERMARK_MODE", "llmwm")               # the fixture generates with the HF llmwm processor
+    mp.setenv("MODEL_KEY_2", "smollm2-native")          # second target: same tokenizer, vLLM built-in watermark
+    mp.setenv("TOKENIZER_PATH_2", tok_path)
+    mp.setenv("WATERMARK_MODE_2", "vllm_gumbel")
     sys.path.insert(0, str(Path(__file__).parents[1] / "app"))
     app_module = importlib.import_module("app")
 
@@ -78,3 +82,14 @@ def test_index(client_and_text):
     client, _ = client_and_text
     r = client.get("/")
     assert r.status_code == 200 and "LLM watermark detector" in r.text
+
+
+def test_second_target(client_and_text):
+    client, text = client_and_text
+    info = client.get("/api/v1/info").json()
+    assert [t["model"] for t in info["targets"]] == ["smollm2-135m", "smollm2-native"]
+    first = client.post("/api/v1/detect", json={"text": text}).json()
+    second = client.post("/api/v1/detect", json={"text": text, "target": "smollm2-native"}).json()
+    assert first["verdict"] == "watermarked" and first["mode"] == "llmwm"
+    assert second["mode"] == "vllm_gumbel" and second["verdict"] != "watermarked"
+    assert client.post("/api/v1/detect", json={"text": text, "target": "nope"}).status_code == 400

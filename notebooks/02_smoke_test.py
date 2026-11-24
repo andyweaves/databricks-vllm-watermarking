@@ -51,7 +51,7 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 dbutils.widgets.dropdown("model", "qwen3_8_27b", ["qwen3_8_27b", "gpt_oss_120b"])
-dbutils.widgets.dropdown("watermark_mode", "llmwm", ["llmwm", "vllm_gumbel", "vllm_dual_key_gumbel"])
+dbutils.widgets.dropdown("watermark_mode", "vllm_dual_key_gumbel", ["vllm_dual_key_gumbel", "vllm_gumbel", "llmwm"])
 dbutils.widgets.text("catalog", "")
 dbutils.widgets.text("schema", "llm_watermark")
 dbutils.widgets.text("volume", "artifacts")
@@ -79,6 +79,7 @@ from databricks.sdk import WorkspaceClient
 from tokenizers import Tokenizer
 
 from llm_watermark import WatermarkConfig, WatermarkKey
+from llm_watermark.models import chat_params
 from llm_watermark.modes import detect, opt_out_fields
 
 w = WorkspaceClient()
@@ -93,17 +94,21 @@ PROMPTS = [
 ]
 
 
-def generate(prompt: str, watermark: bool) -> str:
-    extra = {} if watermark else opt_out_fields(w_("watermark_mode"))
+def generate(prompt: str, watermark: bool, temperature: float = 0.7) -> str:
+    max_tokens, extra = chat_params(MODEL_KEY, 400)
+    if not watermark:
+        extra.update(opt_out_fields(w_("watermark_mode")))
     resp = client.chat.completions.create(model=ENDPOINT, messages=[{"role": "user", "content": prompt}],
-                                          max_tokens=400, temperature=0.7, extra_body=extra or None)
+                                          max_tokens=max_tokens, temperature=temperature, extra_body=extra or None)
     return resp.choices[0].message.content or ""
 
 
-rows = []
+rows, TEXTS = [], []
 for prompt in PROMPTS:
     for marked in ([True, False] if w_("test_control") == "true" else [True]):
         text = generate(prompt, marked)
+        if marked:
+            TEXTS.append((prompt, text))
         r = detect(tok.encode(text, add_special_tokens=False).ids, key, w_("watermark_mode"), WatermarkConfig())
         rows.append((prompt[:40], "watermarked" if marked else "control", r.verdict, round(r.z_score, 1),
                      f"{r.p_value:.1e}", r.num_scored))
@@ -111,6 +116,48 @@ display(spark.createDataFrame(rows, "prompt string, arm string, verdict string, 
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 4. Edits, the other scheme, and temperature 0
+# MAGIC
+# MAGIC For each watermarked reply: the same edits as the app's Robustness tab, and a check with the other watermark
+# MAGIC scheme, which should not detect. Then one reply generated at temperature 0: `llmwm` still marks it (it samples at
+# MAGIC `WATERMARK_GREEDY_TEMPERATURE`), while vLLM's built-in watermark leaves greedy requests unmarked.
+
+# COMMAND ----------
+
+import random
+import re
+
+MODE = w_("watermark_mode")
+OTHER = "llmwm" if MODE.startswith("vllm_") else "vllm_dual_key_gumbel"
+
+
+def check(text: str, mode: str = MODE):
+    r = detect(tok.encode(text, add_special_tokens=False).ids, key, mode, WatermarkConfig())
+    return r.verdict, round(r.z_score, 1), f"{r.p_value:.1e}", r.num_scored
+
+
+edits = []
+for prompt, text in TEXTS:
+    rng = random.Random(0)
+    ids = tok.encode(text, add_special_tokens=False).ids
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    rng.shuffle(sentences)
+    variants = {
+        "original": (text, MODE),
+        "truncated to 150 tokens": (tok.decode(ids[:150]), MODE),
+        "20% of words deleted": (" ".join(x for x in text.split(" ") if rng.random() >= 0.2), MODE),
+        "sentences shuffled": (" ".join(sentences), MODE),
+        f"checked as {OTHER}": (text, OTHER),
+    }
+    for name, (variant, mode) in variants.items():
+        edits.append((prompt[:40], name, *check(variant, mode)))
+greedy = generate(PROMPTS[0], True, temperature=0.0)
+edits.append((PROMPTS[0][:40], "temperature 0", *check(greedy)))
+display(spark.createDataFrame(edits, "prompt string, variant string, verdict string, z double, p string, tokens int"))
+
+# COMMAND ----------
+
 import json
 
-dbutils.notebook.exit(json.dumps(rows))
+dbutils.notebook.exit(json.dumps({"rows": rows, "edits": edits}))

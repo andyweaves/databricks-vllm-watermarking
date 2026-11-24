@@ -96,15 +96,16 @@ dbutils.library.restartPython()
 # MAGIC The defaults match `databricks.yml`. `model` selects one of the two supported models; both fit on one 80 GB A100
 # MAGIC (`GPU_LARGE` on Azure). gpt-oss-120b is tight, so its context window is capped.
 # MAGIC
-# MAGIC `watermark_mode` selects the watermark: `llmwm` is this repo's SynthID-style logits processor; `vllm_gumbel` and
-# MAGIC `vllm_dual_key_gumbel` use vLLM's built-in watermark (`--watermark-config`), started through
-# MAGIC `llm_watermark.launch_native` so the key comes from the secret at start-up. With vLLM 0.33, callers can switch the
-# MAGIC built-in watermark off per request (`watermarking: false`); vLLM 0.34 adds `enforce`, which the launcher sets.
+# MAGIC `watermark_mode` selects the watermark. The default, `vllm_dual_key_gumbel`, and `vllm_gumbel` use vLLM's built-in
+# MAGIC watermark (`--watermark-config`), started through `llm_watermark.launch_native` so the key comes from the secret at
+# MAGIC start-up. With vLLM 0.33, callers can switch the built-in watermark off per request (`watermarking: false`); vLLM
+# MAGIC 0.34 adds `enforce`, which the launcher sets. `llmwm` is this repo's optional SynthID-style logits processor (see
+# MAGIC the README for why it is not the default).
 
 # COMMAND ----------
 
 dbutils.widgets.dropdown("model", "qwen3_8_27b", ["qwen3_8_27b", "gpt_oss_120b"])
-dbutils.widgets.dropdown("watermark_mode", "llmwm", ["llmwm", "vllm_gumbel", "vllm_dual_key_gumbel"])
+dbutils.widgets.dropdown("watermark_mode", "vllm_dual_key_gumbel", ["vllm_dual_key_gumbel", "vllm_gumbel", "llmwm"])
 dbutils.widgets.text("catalog", "")
 dbutils.widgets.text("schema", "llm_watermark")
 dbutils.widgets.text("volume", "artifacts")
@@ -256,6 +257,7 @@ import time
 import requests
 from tokenizers import Tokenizer
 
+from llm_watermark.models import chat_params
 from llm_watermark.modes import detect, launch_prefix, opt_out_fields
 
 TEST_PORT = 3080
@@ -265,7 +267,8 @@ def vllm_command(port: int) -> str:
     """Shell command run by the endpoint (and by the local test). Environment prefixes are allowed."""
     return " ".join([
         "VLLM_USE_FLASHINFER_SAMPLER=0",      # FlashInfer's sampler fails at startup on Serverless GPU
-        "VLLM_USE_V2_MODEL_RUNNER=1",         # the processor implements the Model Runner V2 interface
+        # this repo's processor implements the Model Runner V2 interface; the built-in watermark supports both runners
+        *(["VLLM_USE_V2_MODEL_RUNNER=1"] if MODE == "llmwm" else []),
         *launch_prefix(MODE),                 # vLLM server, plus the watermark processor or launcher
         f"--model {MODEL_DIR}",
         f"--served-model-name {MODEL_KEY}",
@@ -276,7 +279,8 @@ def vllm_command(port: int) -> str:
 
 
 def invoke(prompt: str, watermark: bool = True) -> str:
-    body = {"messages": [{"role": "user", "content": prompt}], "max_tokens": 400, "temperature": 0.7}
+    max_tokens, extras = chat_params(MODEL_KEY, 400)
+    body = {"messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens, "temperature": 0.7, **extras}
     if not watermark:
         body.update(opt_out_fields(MODE))
     r = requests.post(f"http://localhost:{TEST_PORT}/invocations", json=body, timeout=600)
@@ -366,7 +370,17 @@ with mlflow.start_run(run_name=f"{MODEL_KEY}-{MODE}"):
         artifacts={"model_dir": MODEL_DIR},
         metadata={"task": "llm/v1/chat", "entrypoint": entrypoint},
     )
-registered = mlflow.register_model(model_info.model_uri, UC_MODEL, env_pack="databricks_model_serving")
+# Uploading tens of GB to Unity Catalog occasionally fails with a transient "Failed to sign the Databricks URL"
+# error, so retry. A failed attempt leaves an unfinished model version behind, which can be deleted.
+for attempt in range(1, 4):
+    try:
+        registered = mlflow.register_model(model_info.model_uri, UC_MODEL, env_pack="databricks_model_serving")
+        break
+    except mlflow.exceptions.MlflowException as e:
+        if attempt == 3:
+            raise
+        print(f"registration attempt {attempt} failed, retrying in 60 s: {str(e)[:300]}")
+        time.sleep(60)
 print("registered", UC_MODEL, "version", registered.version)
 
 # COMMAND ----------

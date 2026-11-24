@@ -14,8 +14,8 @@ variables:
     description: qwen3_8_27b or gpt_oss_120b (must match the model deployed by notebook 01)
     default: qwen3_8_27b
   watermark_mode:
-    description: llmwm, vllm_gumbel or vllm_dual_key_gumbel (must match notebook 01)
-    default: llmwm
+    description: vllm_dual_key_gumbel (default), vllm_gumbel or llmwm (must match notebook 01)
+    default: vllm_dual_key_gumbel
   endpoint_name:
     description: Name of the watermarked serving endpoint created by notebook 01
     default: watermarked-llm
@@ -28,6 +28,15 @@ variables:
   allow_control:
     description: Show the unwatermarked control option in the app (the endpoint must allow opt-out)
     default: "false"
+  model_2:
+    description: Optional second model for the app (qwen3_8_27b or gpt_oss_120b), or none
+    default: none
+  watermark_mode_2:
+    description: Watermark mode of the second model's endpoint
+    default: vllm_dual_key_gumbel
+  endpoint_name_2:
+    description: Serving endpoint of the second model, or none
+    default: none
   app_name:
     description: Name of the detection app
     default: llm-watermark-detector
@@ -72,6 +81,14 @@ resources:
             value: ${var.watermark_mode}
           - name: ALLOW_CONTROL
             value: ${var.allow_control}
+          - name: MODEL_KEY_2
+            value: ${var.model_2}
+          - name: TOKENIZER_PATH_2
+            value: /Volumes/${var.catalog}/${var.schema}/${var.volume}/${var.model_2}/tokenizer.json
+          - name: SERVING_ENDPOINT_2
+            value: ${var.endpoint_name_2}
+          - name: WATERMARK_MODE_2
+            value: ${var.watermark_mode_2}
       resources:
         - name: watermark-key
           description: Watermark key used to recompute g-values
